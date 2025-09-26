@@ -1,0 +1,693 @@
+---
+title: "Proyecto Supervised Learning"
+author: "Marcos Diaz 221102, Daniel Machic 22118, Maria José Ramirez 221051, Anayancy Morales 19037"
+date: "2024-04-09"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r prep}
+
+# Cargar librerias y archivo csv
+
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(naivebayes)
+library(e1071)
+library(rpart)
+library(rpart.plot)
+library(ggplot2)
+library(gridExtra)
+library(randomForest)
+library(caret)
+library(weights)
+
+hotel <- read.csv("hotel.csv")
+
+```
+
+## Resumen de exploracion de datos
+
+### Tipos de datos
+
+```{r}
+# Tipos de datos
+str(hotel)
+```
+
+### Esquema de preguntas
+
+1.  ¿Influye el tiempo de anticipacion de la reserva en que los clientes cancelen o no?
+2.  ¿Como se distribuye el tiempo de anticipacion de la reserva?
+3.  ¿Las noches hospedadas entre semana influyen en la cancelacion?
+4.  ¿Las noches hospedadas en fin de semana influyen en la cancelacion?
+5.  ¿Que tanto influye si un cliente ya ha cancelado antes en si lo volvera a hacer?
+6.  ¿El dia y el mes de hospedaje tiene algun efecto en la cancelacion?
+7.  ¿Como es la distribucion de precio promedio de habitaciones y tipos de segmentos de mercado respecto al tiempo de anticipacion de la reserva?
+8.  ¿El tipo de habitacion y la forma de contratacion del servicio influyen en las cancelaciones?
+
+### Relaciones identificadas
+
+```{r relaciones}
+
+rel = hotel
+rel <- rel %>%
+  mutate(booking = ifelse(booking_status == "Not_Canceled", 0, 1))
+rel <- hotel[sapply(hotel, is.numeric)]
+
+cor(rel)
+
+```
+
+### Tablas de contingencia
+
+```{r cont}
+#Tabla de contingencia con respecto a qué tipo de habitación es la que más recibe cancelaciones
+tabla_contingencia <- table(hotel$room_type_reserved, hotel$booking_status)
+print(tabla_contingencia)
+
+#Tabla de contingencia con respecto a con qué tipo de forma contrataron el servicio:
+tabla_contingencia <- table(hotel$market_segment_type, hotel$booking_status)
+print(tabla_contingencia)
+
+#Tabla de contingencia con respecto a qué mes es el que más cancelaciones recibe:
+tabla_contingencia <- table(hotel$arrival_month, hotel$booking_status)
+print(tabla_contingencia)
+
+```
+
+### Distribuciones
+
+```{r}
+# Grafica 1
+ggplot(hotel, aes(x = no_of_week_nights)) +
+  geom_histogram(binwidth = 1, fill = "#003785", color = "black") +
+  labs(title = "Cantidad de noches reservadas por semana", x = "Cantidad de noches", y = "Frecuencia")
+```
+
+Se puede apreciar que la mayoría de las reservaciones comprenden estancias de 0 a 5 noches entre semana. La estadia de 2 noches es la mas frecuente entre los clientes y el hospedarse 5 noches o mas son las menos frecuentes en la semana.
+
+```{r}
+# Grafica 2
+ggplot(hotel, aes(x = lead_time)) +
+  geom_histogram(binwidth = 5, fill = "#0a5cb8", color = "black") +
+  labs(title = "Cantidad de reservaciones por dias de anticipacion", x = "Tiempo de anticipacion", y = "Frecuencia")
+```
+
+La distribución de las reservaciones exhibe un sesgo leve hacia la derecha, lo que sugiere que la mayoría de las reservas se realizan con una anticipación de entre 10 y 20 días. Los clientes tienden mas a reservar con poco tiempo de anticipacion y son pocos los que lo hacen con mucho tiempo de anticipacion.
+
+```{r}
+# Grafica 3
+ggplot(hotel, aes(x = arrival_month)) +
+  geom_histogram(binwidth = 1, fill = "#2196f3", color = "black") +
+  labs(title = "Cantidad de reservaciones por meses de anticipacion", x = "Cantidad de meses", y = "Frecuencia")
+```
+
+Al analizar el patrón de reservaciones a lo largo del año, se destaca una concentración notable entre los meses de julio y diciembre. Es el mes de octubre el que mas tiende a tener reservaciones pero de la misma forma la temporada de otoño es la que tiende a ser mas frecuentada y reservada en comparacion a todas las demás.
+
+### Graficas
+
+#### Histogramas
+
+```{r hist}
+
+# Histograma del tiempo de anticipación de la reserva
+ggplot(hotel, aes(x = lead_time)) +
+  geom_histogram(binwidth = 10, fill = "skyblue", color = "black") +
+  labs(title = "Distribución del Tiempo de Anticipación de la Reserva",
+       x = "Tiempo de Anticipación (días)", y = "Frecuencia")
+```
+
+En el histograma se puede observar que los clientes tienden a reservar con muy poco tiempo de anticipacion. Se puede observar que las personas tienden a reservar el mismo dia en el que desean hospedarse (eso representa el 0) y la mayor cantidad de valores se concentran del lado izquierdo, es decir, con poco tiempo de anticipacion como serian entre 10 a 50 dias aproximadamente.
+
+```{r}
+# Histograma de precio promedio por habitación
+ggplot(hotel, aes(x = avg_price_per_room, fill = booking_status)) +
+  geom_histogram(bins = 30) +
+  labs(title = "Distribución del Precio Promedio por Habitación",
+       x = "Precio Promedio por Habitación (euros)", y = "Frecuencia")
+```
+
+Se puede observar en el histograma que el precio promedio por habitacion que se paga es de aproximadamente 100 euros tanto para los que cancelan como los que no cancelan. La distribucion de ambos grupos es mas parecida solo que los que cancelan tienden a ser mas frecuentes en la reserva de sus habitaciones. Luego los precios entre 50 a 100 euros y entre 100 y 150 tienden a ser frecuentes tambien.
+
+```{r}
+# Histograma de reservaciones por dia del mes
+ggplot(hotel, aes(x = arrival_date, fill = booking_status)) +
+  geom_histogram() +
+  labs(title = "Distribución de las reservaciones por dia del mes",
+       x = "Dia del mes", y = "Frecuencia")
+```
+
+En el histograma se puede observar que para ambos grupos es el dia 15 del mes donde se realizan mas reservas que en cualquier otro dia ya sea que se hospeden o tengan ese dia reservado. La distribucion para ambos grupos es parecida pero comparten que la quincena es donde mas reservas hay, luego el dia 2 es el mas reservado aproximadamente y el menos reservado es el dia 31.
+
+#### Graficas de barras
+
+```{r bar}
+
+# Gráfico de cancelaciones segun noches hospedadas entre semana
+ggplot(hotel, aes(x = no_of_week_nights, fill = booking_status)) +
+  geom_bar() +
+  labs(title = "Cancelaciones segun cantidad de noches hospedadas entre semana",
+       x = "Cantidad de noches", y = "Cantidad de Cancelaciones") 
+```
+
+Los datos presentados en la gráfica sugieren que los huéspedes son más propensos a cancelar sus reservas cuando planean hospedarse por un período más largo entre semana.Los primeros 3 días son donde los clientes son más propensos a cancelar.
+
+```{r bar2}
+# Gráfico de cancelaciones segun noches hospedadas en fin de semana
+ggplot(hotel, aes(x = no_of_weekend_nights, fill = booking_status)) +
+  geom_bar() +
+  labs(title = "Cancelaciones segun cantidad de noches hospedadas en fin de semana",
+       x = "Cantidad de noches", y = "Cantidad de Cancelaciones") 
+```
+
+Los datos presentados en la gráfica sugieren que los huéspedes son menos propensos a cancelar sus reservas cuando planean hospedarse por un período largo durante el fin de semana.Los primeros 3 días son donde los clientes son más propensos a cancelar.
+
+```{r bar3}
+# Gráfico de cancelaciones por mes
+ggplot(hotel, aes(x = factor(arrival_month), fill = booking_status)) +
+  geom_bar() +
+  labs(title = "Cancelaciones por Mes",
+       x = "Mes", y = "Cantidad de Cancelaciones")
+
+```
+
+Los datos presentados en la gráfica sugieren que los huéspedes son más propensos a cancelar sus reservas cuando planean hospedarse por un período largo durante los meses de verano.
+
+#### Graficas de caja y bigotes
+
+```{r boxplot}
+
+# Boxplot de tipo de habitaciones respecto al tiempo de anticipacion de la reserva
+ggplot(hotel, aes(x = room_type_reserved, y = lead_time)) +
+  geom_boxplot(fill = "skyblue", color = "black") +
+  labs(title = "Distribucion de tipo de habitaciones respecto al tiempo de anticipacion de la reserva",
+       x = "Tipo de habitacion reservada",
+       y = "Tiempo de anticipacion")
+
+```
+
+Los datos presentados en la gráfica sugieren que los huéspedes son más propensos a reservar con mas tiempo de anticipación el tipo de habitación 1, mientras que la habitación 7 es la que con menos timpo de anticipación reservan.Y la media de reservación con anticipación es menor a los 100 días para cualquier tipo de anticipación.
+
+```{r}
+# Boxplot de cancelaciones respecto al tiempo de anticipacion de la reserva 
+ggplot(hotel, aes(x = booking_status, y = lead_time)) +
+  geom_boxplot(fill = "skyblue", color = "black") +
+  labs(title = "Distribucion de cancelaciones respecto al tiempo de anticipacion de la reserva",
+       x = "Estado de reserva",
+       y = "Tiempo de anticipacion")
+```
+
+Los datos presentados en la gráfica sugieren que los huéspedes que no cancelan su reservación, hacen su reservación con menos días antes de su llegada al hotel, Mientras que los que hacen su reserva con más anticipación son más propensos a cancelar.
+
+```{r}
+# Boxplot de tipo de segmento respecto al tiempo de anticipacion de la reserva
+ggplot(hotel, aes(x = market_segment_type, y = lead_time)) +
+  geom_boxplot(fill = "skyblue", color = "black") +
+  labs(title = "Distribucion de tipo de segmento de mercado respecto al tiempo de anticipacion de la reserva",
+       x = "Tipo de segmento de mercado",
+       y = "Tiempo de anticipacion")
+```
+
+Los datos presentados en la gráfica sugieren que los huéspedes que realizan su reservación offline hacen su reservación con más días de anticipacición con una media de 100 días, mientras que los huéspedes que lo hacen desde un avión suelen hacer la reservación el mismo día de llegada.
+
+#### Graficas de dispersion
+
+```{r disp}
+
+# Grafica
+ggplot(hotel, aes(x = avg_price_per_room, y = lead_time, color = room_type_reserved)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  coord_flip() +
+  labs(x = "Lead Time", y = "Average Price per Room", color = "Type of room") +
+  theme_minimal()
+```
+
+El análisis del gráfico de dispersión resalta una asociación robusta y positiva entre el momento de llegada al hotel y el costo de una habitacion del hotel. No se observa una tendencia entre los valores y los datos estan bastante dispersos y no se infiere una relacion como tal.
+
+```{r}
+# Grafica
+hotel_sum <- hotel %>%
+  group_by(avg_price_per_room, booking_status) %>%
+  summarise(total_nights = sum(no_of_week_nights), .groups = "drop")
+
+ggplot(hotel_sum, aes(x = total_nights, y = avg_price_per_room, color = booking_status)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  coord_flip() +
+  labs(x = "Total no. of week nights", y = "Average Price per Room", color = "Booking status") +
+  theme_minimal()
+```
+
+El gráfico de dispersión revela una relación lineal negativa, indicando que posiblemente a medida que aumenta el número de noches reservadas, la probabilidad de cancelación puede incrementarse. Los datos si parecen seguir una cierta tendencia pero son muy pocos y en general estan dispersos de formas similares.
+
+```{r}
+#Grafica
+hotel_sum <- hotel %>%
+  group_by(avg_price_per_room, booking_status) %>%
+  summarise(total_nights = sum(arrival_month), .groups = "drop")
+
+ggplot(hotel_sum, aes(x = total_nights, y = avg_price_per_room, color = booking_status)) +
+  geom_point() +
+  geom_smooth(method = "lm", se = FALSE) +
+  coord_flip() +
+  labs(x = "Arrival Month", y = "Average Price per Room", color = "Booking status") +
+  theme_minimal()
+```
+
+El análisis del gráfico de dispersión muestra una relación lineal fuerte y negativa entre el costo de la habitación y la probabilidad de asistencia del cliente durante los primeros días del mes. Los datos de ambas poblaciones estan dispersas de forma similar y siguen algun tipo de tendencia pero no cuentan con una forma clara en como se distribuyen.
+
+#### Resumen de relaciones identificadas
+
+Entre las relaciones más evidentes, destacamos:
+
+-La relación entre el costo de la habitación y la cantidad de niños permitidos, así como la cantidad de adultos. -La relación entre el costo de la habitación y la distribución de noches entre semana y de fin de semana durante la estancia. -La conexión entre la repetición de estancia de los clientes y el número de reservas previas no canceladas. -La relación entre el número de noches de fin de semana y el número de noches entre semana.
+
+En conclusión, podemos afirmar que las relaciones más sólidas se encuentran entre el costo y el nivel de servicio ofrecido. Tambien por medio de las gráficas se puede ver una relacion respecto al mes y dia de reserva con dias y meses mas reservados. Tambien se ve una relacion con el tiempo de anticipacion de reserva, habitaciones reservadas, segmentos de mercado y precios promedio de habitaciones.
+
+## Train y Test
+
+```{r dataframes}
+
+smp_size <- floor(0.70 * nrow(hotel))
+set.seed(001)
+
+## Archivos train y test
+train_ind <- sample(seq_len(nrow(hotel)), size = smp_size)
+train <- hotel[train_ind, ]
+test <- hotel[-train_ind, ]
+
+```
+
+## Modelos de Supervised Learning
+
+#### Naive Bayes
+
+```{r bayes}
+
+# MODELO 1
+modeloBayes<- naiveBayes(booking_status ~ no_of_week_nights + no_of_weekend_nights + lead_time + arrival_date + arrival_month + repeated_guest + avg_price_per_room + no_of_previous_cancellations + no_of_previous_bookings_not_canceled, data=train)
+predNB<-predict(modeloBayes, newdata=test, type="raw")
+
+predictionNB<-as.data.frame(predNB)
+predictionNB$result<-ifelse(predictionNB[,1]>predictionNB[,2],0,1)
+predictionNB$Prediccion = ifelse(predictionNB$result==1,"SI","NO")
+resultsNB<-table(test$booking_status, predictionNB$Prediccion)
+resultsNB
+
+print("___________________________________________________________________________")
+
+###Calcular Accuracy del módelo
+accuracyNB<-sum(diag(resultsNB))/sum(resultsNB)
+print(paste("Accuracy, modelo 1 Naive-Bayes::", accuracyNB))
+
+###Calcular Recall
+recallNB<-(resultsNB[2,2]/(resultsNB[2,1]+resultsNB[2,2]))
+print(paste("Recall, modelo 1 Naive-Bayes::", recallNB))
+
+###Calcular Precision
+precisionNB<-(resultsNB[2,2]/(resultsNB[1,2]+resultsNB[2,2]))
+print(paste("Precision, modelo 1 Naive-Bayes:", precisionNB))
+
+# MODELO 2
+modeloBayes2 <-naiveBayes(booking_status ~ no_of_weekend_nights + no_of_week_nights + lead_time + no_of_adults + arrival_month + arrival_date + market_segment_type + repeated_guest + no_of_special_requests + avg_price_per_room, data=train)
+predNB2<-predict(modeloBayes2, newdata=test, type="raw")
+
+predictionNB2 <-as.data.frame(predNB2)
+predictionNB2$result <-ifelse(predictionNB2[,1]>predictionNB2[,2],0,1)
+predictionNB2$Prediccion = ifelse(predictionNB2$result==1,"SI","NO")
+resultsNB2 <-table(test$booking_status, predictionNB2$Prediccion)
+resultsNB2
+
+print("___________________________________________________________________________")
+
+###Calcular Accuracy del módelo
+accuracyNB2<-sum(diag(resultsNB2))/sum(resultsNB2)
+print(paste("Accuracy, modelo 2 Naive-Bayes::", accuracyNB2))
+
+###Calcular Recall
+recallNB2<-(resultsNB2[2,2]/(resultsNB2[2,1]+resultsNB2[2,2]))
+print(paste("Recall, modelo 2 Naive-Bayes::", recallNB2))
+
+precisionNB2<-(resultsNB2[2,2]/(resultsNB2[1,2]+resultsNB2[2,2]))
+print(paste("Precision, modelo 2 Naive-Bayes:", precisionNB2))
+
+```
+
+#### Decision Tree
+
+```{r DT}
+#--------------------------------------------Modelos--------------------------------------------
+
+#Modelo 1
+modelo_arbol <- rpart(booking_status ~ no_of_weekend_nights + no_of_week_nights + lead_time + arrival_date + arrival_month + repeated_guest + avg_price_per_room + no_of_previous_cancellations + no_of_previous_bookings_not_canceled, data = train, method = "class")
+
+#Modelo 2
+modelo_arbol2 <- rpart(booking_status ~ no_of_weekend_nights + no_of_week_nights + lead_time + no_of_adults + arrival_month + arrival_date + market_segment_type + repeated_guest + no_of_special_requests + avg_price_per_room, data = train, method = "class")
+
+
+#--------------------------------------------Graficas de comportamiento--------------------------------------------
+
+#Modelo 1
+rpart.plot(modelo_arbol, main = "Arbol de decisión 1")
+
+#Modelo 2
+rpart.plot(modelo_arbol2, main = "Arbol de decisión 2")
+
+
+#--------------------------------------------Acurracy--------------------------------------------
+
+#Modelo 1 Decision Tree
+predicciones_pruebaA1 <- predict(modelo_arbol, newdata = test, type = "class")
+matrixA1 <- table(predicciones_pruebaA1, test$booking_status)
+verdaderos_positivosA1 <- matrixA1[2, 2]
+verdaderos_negativosA1 <- matrixA1[1, 1]
+falsos_positivosA1 <- matrixA1[1, 2]
+falsos_negativosA1 <- matrixA1[2, 1]
+acurracyDT1 <- (verdaderos_positivosA1 + verdaderos_negativosA1) / (verdaderos_positivosA1 + verdaderos_negativosA1 + falsos_positivosA1 + falsos_negativosA1)
+cat("\n","Acurracy Modelo 1 Decision Tree:", acurracyDT1)
+
+#Modelo 2 Decision Tree
+predicciones_pruebaA2 <- predict(modelo_arbol2, newdata = test, type = "class")
+matrixA2 <- table(predicciones_pruebaA2, test$booking_status)
+verdaderos_positivosA2 <- matrixA2[2, 2]
+verdaderos_negativosA2 <- matrixA2[1, 1]
+falsos_positivosA2 <- matrixA2[1, 2]
+falsos_negativosA2 <- matrixA2[2, 1]
+acurracyDT2 <- (verdaderos_positivosA2 + verdaderos_negativosA2) / (verdaderos_positivosA2 + verdaderos_negativosA2)
+cat("\n","Acurracy Modelo 2 Decision Tree:", acurracyDT2)
+
+
+#--------------------------------------------Recall--------------------------------------------
+#Modelo 1 Decision Tree
+predicciones_pruebaR1 <- predict(modelo_arbol, newdata = test, type = "class")
+matrixR1 <- table(predicciones_pruebaR1, test$booking_status)
+verdaderos_positivosR1 <- matrixR1[2, 2]
+falsos_negativosR1 <- matrixR1[2, 1]
+recallDT1 <- verdaderos_positivosR1 / (verdaderos_positivosR1 + falsos_negativosR1)
+cat("\n","Recall Modelo 1 Decision Tree:", recallDT1)
+
+
+#Modelo 2 Decision Tree
+predicciones_pruebaR2 <- predict(modelo_arbol2, newdata = test, type = "class")
+matrixR2 <- table(predicciones_pruebaR2, test$booking_status)
+verdaderos_positivosR2 <- matrixR2[2, 2]
+falsos_negativosR2 <- matrixR2[2, 1]
+recallDT2 <- verdaderos_positivosR2 / (verdaderos_positivosR2 + falsos_negativosR2)
+cat("\n","Recall Modelo 2 Decision Tree:", recallDT2)
+
+
+#--------------------------------------------Precision--------------------------------------------
+#Modelo 1 Decision Tree
+predicciones_pruebaP1 <- predict(modelo_arbol, newdata = test, type = "class")
+precisionDT1 <- sum(predicciones_pruebaP1 == test$booking_status) / nrow(test)
+cat("\n", "Precision Modelo 1 Decision Tree:", precisionDT1)
+
+#Modelo 2 Decision Tree
+predicciones_pruebaP2 <- predict(modelo_arbol2, newdata = test, type = "class")
+precisionDT2 <- sum(predicciones_pruebaP2 == test$booking_status) / nrow(test)
+cat("\n", "Precision Modelo 2 Decision Tree:", precisionDT2)
+
+```
+
+#### Random Forest
+
+```{r rf}
+
+## MODELO 1 
+
+modelRF1 <- randomForest(as.factor(booking_status) ~ no_of_week_nights + no_of_weekend_nights + lead_time + arrival_date + arrival_month + repeated_guest + avg_price_per_room + no_of_previous_cancellations + no_of_previous_bookings_not_canceled, data=train, importance = F, type = "class")
+modelRF1
+
+
+predRF1 <- predict(modelRF1, newdata = test, type = "class")
+predRF1.2 = case_when(predRF1 == 'Canceled'~'Canceled',
+                      predRF1 == 'Not_Canceled'~'Not_Canceled'
+                      )
+
+resultsRF1<-table(test$booking_status, predRF1.2)
+resultsRF1
+
+#Resultado de Acurracy
+accuracyRF1<-sum(diag(resultsRF1))/sum(resultsRF1)
+print(paste("Accuracy, modelo 1 Random Forest:", accuracyRF1))
+
+#Resultado de Recall
+recallRF1<-(resultsRF1[2,2]/(resultsRF1[2,1]+resultsRF1[2,2]))
+print(paste("Recall, modelo 1 Random Forest:", recallRF1))
+
+#Resultado de Precision
+precisionRF1<-(resultsRF1[2,2]/(resultsRF1[1,2]+resultsRF1[2,2]))
+print(paste("Precision, modelo 1 Random Forest:", precisionRF1))
+
+## MODELO 2
+
+modelRF2 <- randomForest(as.factor(booking_status) ~ no_of_weekend_nights + no_of_week_nights + lead_time + no_of_adults + arrival_month + arrival_date + market_segment_type + repeated_guest + no_of_special_requests + avg_price_per_room, data=train, importance = F, type = "class")
+
+predRF2 <- predict(modelRF2, newdata = test, type = "class")
+predRF2.2 = case_when(predRF2 == 'Canceled'~'Canceled',
+                      predRF2 == 'Not_Canceled'~'Not_Canceled'
+                      )
+
+resultsRF2 <-table(test$booking_status, predRF2.2)
+resultsRF2
+
+
+
+#Resultado de Acurracy
+accuracyRF2<-sum(diag(resultsRF2))/sum(resultsRF2)
+print(paste("Accuracy, modelo 2 Random Forest:", accuracyRF2))
+
+#Resultado de Recall
+recallRF2<-(resultsRF2[2,2]/(resultsRF2[2,1]+resultsRF2[2,2]))
+print(paste("Recall, modelo 2 Random Forest:", recallRF2))
+
+#Resultado de Precision
+precisionRF2<-(resultsRF2[2,2]/(resultsRF2[1,2]+resultsRF2[2,2]))
+print(paste("Precision, modelo 2 Random Forest:", precisionRF2))
+```
+
+#### Regresion logistica
+
+```{r log}
+
+# Dumificacion
+hotel_dummy = hotel
+hotel_dummy$booking_status <- ifelse(hotel_dummy$booking_status == "Canceled", 1, 0)
+
+hotel_dummy$market_segment_type = as.factor(hotel_dummy$market_segment_type)
+mercado <- dummify(hotel_dummy$market_segment_type)
+mercado = as.data.frame(mercado)
+hotel2 = as.data.frame(cbind(hotel_dummy, mercado))
+
+hotel2$market_segment_type = NULL
+hotel_dummy = hotel2
+rm(hotel2)
+rm(mercado)
+
+smp_size <- floor(0.70 * nrow(hotel_dummy))
+set.seed(001)
+
+## Archivos train y test de dummy
+train_ind <- sample(seq_len(nrow(hotel_dummy)), size = smp_size)
+train_dummy <- hotel_dummy[train_ind, ]
+test_dummy <- hotel_dummy[-train_ind, ]
+
+# MODELO 1
+modelo1 = glm(booking_status ~ no_of_weekend_nights + no_of_week_nights + lead_time + arrival_date + arrival_month + repeated_guest + avg_price_per_room + no_of_previous_cancellations + no_of_previous_bookings_not_canceled, data=train_dummy, family = binomial)
+
+predtrain <-  predict(modelo1, newdata=train_dummy, "response")
+predtest <-  predict(modelo1, newdata=test_dummy, "response")
+
+predtrain = as.data.frame(predtrain)
+predtest = as.data.frame(predtest)
+
+predtrain$respuesta = ifelse(predtrain > 0.5,"SI","NO")
+predtest$respuesta = ifelse(predtest > 0.5,"SI","NO")
+
+results_test<-table(test$booking_status, predtest$respuesta)
+results_test
+prop.table(results_test)
+
+# Calculo de accuracy, precision y recall
+accuracyLOG1<-sum(diag(results_test))/sum(results_test)
+recallLOG1<-(results_test[2,2]/(results_test[2,1]+results_test[2,2]))
+precisionLOG1<-(results_test[2,2]/(results_test[1,2]+results_test[2,2]))
+
+# MODELO 2
+modelo2 = glm(booking_status ~ no_of_weekend_nights + no_of_week_nights + lead_time + no_of_adults + arrival_month + arrival_date + Aviation + Complementary + Corporate + Offline + Online + repeated_guest + no_of_special_requests + avg_price_per_room, data=train_dummy, family = binomial)
+
+predtrain2 <-  predict(modelo2, newdata=train_dummy, "response")
+predtest2 <-  predict(modelo2, newdata=test_dummy, "response")
+
+predtrain2 = as.data.frame(predtrain2)
+predtest2 = as.data.frame(predtest2)
+
+predtrain2$respuesta = ifelse(predtrain2 > 0.5,"SI","NO")
+predtest2$respuesta = ifelse(predtest2 > 0.5,"SI","NO")
+
+results_test2<-table(test_dummy$booking_status, predtest2$respuesta)
+results_test2
+prop.table(results_test2)
+
+# Calculo de accuracy, precision y recall
+accuracyLOG2<-sum(diag(results_test2))/sum(results_test2)
+recallLOG2<-(results_test2[2,2]/(results_test2[2,1]+results_test2[2,2]))
+precisionLOG2<-(results_test2[2,2]/(results_test2[1,2]+results_test2[2,2]))
+
+```
+
+## Explicacion de resultados
+
+```{r exp}
+
+modelos = c("Modelo NB1", "Modelo NB2",
+            "Modelo DT1", "Modelo DT2", 
+            "Modelo RF1", "Modelo RF2",
+            "Modelo LOG1", "Modelo LOG2")
+
+accuracy = c(round(accuracyNB, 2), round(accuracyNB2, 2),
+             round(acurracyDT1, 2), round(acurracyDT2, 2),
+             round(accuracyRF1, 2), round(accuracyRF2, 2),
+             round(accuracyLOG1, 2), round(accuracyLOG2, 2))
+
+recall = c(round(recallNB, 2), round(recallNB2, 2),
+             round(recallDT1, 2), round(recallDT2, 2),
+             round(recallRF1, 2), round(recallRF2, 2),
+             round(recallLOG1, 2), round(recallLOG2, 2))
+
+precision = c(round(precisionNB, 2), round(precisionNB2, 2),
+             round(precisionDT1, 2), round(precisionDT2, 2),
+             round(precisionRF1, 2), round(precisionRF2, 2),
+             round(precisionLOG1, 2), round(precisionLOG2, 2))
+
+DF_comparativo = as.data.frame(rbind(accuracy, recall, precision))
+colnames(DF_comparativo) = modelos
+```
+
+## Modelo seleccionado
+
+*Accuracy:* El accuracy representa la cantidad de clientes que el modelo predijo de forma correcta respecto a los datos que ya se tenian. Un accuracy alto significa que la mayoria de personas que dijeron que cancelarian lo hicieron y los que no cancelarian no cancelaron.
+
+*Recall:* El recall representa todos los falsos negativos, es decir, que tanto el modelo predijo que no cancelarian cuando en realidad si terminaron cancelando. Si el recall es alto significa que el modelo cada vez menos predice falsos negativos, en este caso representa a quienes dicen que no cancelan cuando en realidad si lo hacen. En temas de costos se ve como una habitacion ocupada y al predecir de forma erronea w3 pierde el 30% del valor de la habitacion ya que nunca se alquilo.
+
+*Precision:* El precision representa todos los falsos positivos, es decir, que tanto el modelo predijo que si cancelerian cuando en realidad no terminan cancelando. Un precision alto significa que predecira menos falsos positivos y habra menos casos en que se dice que cancelera pero en realidad no lo hara. En temas de costos esto representa una posible sobreventa del hotel en donde podria verse afectados en temas de competencia con otros hoteles y su propia reputacion. El hotel perderia el 40% del precio original.
+
+```{r modeloESC}
+
+DF_comparativo
+
+### Graficas
+Comparacion = as.data.frame(DF_comparativo) %>%
+  mutate(met = rownames(DF_comparativo)) %>%
+  gather("Mod", "Valor", -met) %>%
+  mutate(tipo = substr(Mod, nchar(Mod), nchar(Mod)))
+
+ggplot(Comparacion, aes(x = met, y = Valor, fill = Mod)) +
+  geom_col(position = "dodge") +
+  labs(title = "Comparacion de modelos", 
+       x = "Metricas",
+       y = "Valores")
+
+```
+
+*Modelo escogido:* El modelo a escoger seria el Modelo RF2 (modelo 2 de random forest) debido a que arroja valores bastante altos y aceptables en comparacion a los otros modelos y es el que mas minimiza las posibles perdidas que pueda tener el hotel. El accuracy es de 0.90, el recall de 0.95 y el precision de 0.91 de forma que los tres estan balanceados y reducen en gran forma los riesgos. En el contexto del hotel el precision es mas importante porque representa un costo mas alto pero el predecir falsas reservas tambien es un costo alto. Debido a esto es que este es el modelo seleccionado y el mejor a utilizar de todos.
+
+## Impacto economico
+
+```{r}
+total <- sum(resultsRF2) 
+
+propRF2 <- resultsRF2/total
+propRF2
+```
+
+```{r}
+room <- mean(hotel$avg_price_per_room)
+room
+```
+
+```{r}
+margen <- room*0.3
+margen
+```
+
+```{r}
+perdida <- propRF2[1,2]*room * (-0.3) + propRF2[2,1] * room * (-0.4)
+perdida
+```
+
+```{r}
+margen + perdida
+```
+
+```{r}
+(margen + perdida)/ room
+```
+
+```{r}
+real <- case_when(test$booking_status == 'Canceled' ~ 1, predRF2 == 'Not_Canceled' ~ 0)
+modelo = case_when(predRF2 == 'Canceled'~ 1, predRF2 == 'Not_Canceled' ~ 0 )
+
+impacto_ec <- as.data.frame(cbind(test$Booking_ID, test$avg_price_per_room, real, modelo))
+colnames(impacto_ec) = c("Reserva_id", "Precio_habitacion", "real", "modelo")
+
+impacto_ec$Precio_habitacion <- as.numeric(impacto_ec$Precio_habitacion)
+
+impacto_ec <- impacto_ec %>%
+  mutate(falso_positivo = Precio_habitacion*0.4, falso_negativo = Precio_habitacion*0.3)
+
+impacto_ec$costo_error <- case_when(impacto_ec$real == impacto_ec$modelo ~ 0,
+                         impacto_ec$real == 0 & impacto_ec$modelo == 1 ~ impacto_ec$falso_positivo,
+                         impacto_ec$real == 1 & impacto_ec$modelo == 0 ~ impacto_ec$falso_negativo,
+                         TRUE ~ 0 )
+
+test_total <- sum(impacto_ec$Precio_habitacion)
+print(test_total)
+test_ganancia <- test_total*0.3
+test_ganancia 
+```
+
+```{r}
+test_perdida <- sum(impacto_ec$costo_error)
+test_perdida
+```
+
+```{r}
+ganancia_nueva <- test_ganancia - test_perdida
+ganancia_nueva
+```
+
+```{r}
+ganancia_nueva/test_total
+```
+
+*¿Como se ve el impacto economico con el modelo?* El precio promedio de una habitacion es de \$103.42 y el modelo escogido puede causar una perdida de \$3.46 por cada habitacion reservada. El margen de ganancia del hotel es de \$31.03 (que es el 30% del valor del precio original) y con las perdidas tomadas en cuenta se tiene que ahora el hotel ganará \$27.56 (el 27.56% del valor del precio original). Si las perdidas se deducen del margen entonces el nuevo margen de ganancia sera aproximadamente del 27.5%.
+
+Con los datos utilizados para realizar el modelo y analizar el impacto economico se tiene que entre todas las observaciones el hotel obtuvo un total del \$1,122,480 de los cuales obtuvo una ganancia de \$336,743.9 (30% del mismo). Luego utilizando el precio promedio de las habitaciones y obteniendo los falsos negativos y positivos se tiene una pérdida de \$21,502.64. Al deducir la perdida del margen de ganancia del hotel se tiene que la ganancia de \$336,743.9 se reduciría a \$315,241.30 (28% del ingreso total) y se ve una reduccion aproximada del 2%.
+
+## Conclusiones
+
+1. Teniendo en cuenta la importancia tanto del recall como del precision para este caso, es fundamental mantener un enfoque equilibrado en la satisfacción del cliente. En este caso se escogio el modelo que más reducia el riesgo de tener perdidas por imprecisiones del modelo. Se obtiene un accuracy de 0.90, un recall de 0.95 y un precision de 0.91.
+
+2. De forma gráfica y ánalitica, tomando en cuenta el segundo modelo utilizado se encuentran diversas variables que de esta forma parecen influir en las cancelaciones: tiempo de anticipacion, noches de estadia, precio promedio por habitacion, dia y mes de llegada, clientes que han cancelado anteriormente, segmentos de mercado, entre otros. Numero de adultos y cantidad de pedidos especiales no estan contemplados dentro de la exploracion inicial.
+
+3. Al tomar en cuenta las pérdidas por reserva se tiene una pérdida del 3.46% de margen de ganancia (utilizando este modelo) y el hotel llega a ganar $27.56 (el 27.56% del precio original de la habitación).
+
+4. En cuanto a ganancias totales se refiere el hotel pasa de ganar $336,743.9 a $315,241.30 con un 28% del ingreso total y una reduccion del 2%. 
+
+
+## Recomendaciones
+
+1.  Revisar y ajustar las políticas de cancelación del hotel para reducir las pérdidas por cancelaciones de reservas. Por ejemplo, considerar implementar una política de cancelación más estricta que requiera un preaviso más largo o la aplicación de cargos por cancelación después de cierto período de tiempo.
+
+2.  El modelo no tiene una prediccion completamente exacta por lo que no es 100% exacto pero puede ser una gran ayuda al hotel para minimizar los riesgos de cancelaciones y por lo tanto evitar una perdida significativa de ingresos en la medida de lo posible.
+
+3.  Utilizar estrategias de precios dinámicos para maximizar los ingresos y minimizar las pérdidas. Esto podría incluir ajustar los precios de las habitaciones en función de la demanda y la disponibilidad, ofreciendo descuentos por reserva anticipada o promociones especiales para períodos de baja demanda.
+
+4.  Fomentar la fidelidad de los clientes implementando programas de recompensas y beneficios para aquellos que reservan con regularidad. Ofreciendo incentivos especiales, como upgrades de habitación o servicios complementarios, para los clientes recurrentes como una forma de mantener su lealtad y reducir las cancelaciones.
+
+5.  Monitorear y analizar los datos de reservas y cancelaciones para identificar tendencias y patrones que puedan ayudar a prevenir futuras pérdidas. Incluyendo el seguimiento de variables como la temporada, la antelación con que se realiza la reserva y el comportamiento del cliente para informar decisiones estratégicas.
